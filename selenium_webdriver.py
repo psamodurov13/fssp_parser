@@ -36,20 +36,38 @@ def check_tag_exists(selector):
 
 
 def bypass_captcha(drv: webdriver.Chrome):
-    count = 1
+    count = 0
     logger.info(f'Запущена функция bypass_captcha')
+    time_for_response = 0
+    repeat_check = False
     while True:
-        logger.info(f'Попытка расшифровки капчи {count}')
         try:
             captcha_img = drv.find_element(By.CSS_SELECTOR, '#capchaVisual')
+            send_button = drv.find_element(By.CSS_SELECTOR, '#ncapcha-submit')
+            logger.info(f'SEND BUTTON STYLE {send_button.get_attribute("style")}')
+            while True:
+                if send_button.get_attribute("style") == 'display: none;':
+                    time.sleep(1)
+                else:
+                    break
         except Exception:
-            logger.debug(f'Капча не найдена - {Exception}')
-            break
+            if count == 0 and not repeat_check:
+                logger.info(f'Exception with count = 0. Repeat')
+                drv.refresh()
+                time.sleep(3)
+                repeat_check = True
+                continue
+            else:
+                logger.debug(f'Капча не найдена - {Exception}')
+                return count, time_for_response
+        count += 1
+        logger.info(f'Попытка расшифровки капчи {count}')
         src = captcha_img.get_attribute('src').replace('data:image/jpeg;base64,', '')
         answer = rq.post(
             f"https://rucaptcha.com/in.php",
             json={"key": API_KEY, "method": "base64", "body": src, "json": 1, "lang": "ru"},
         )
+        start_request = time.time()
         logger.info(f'Запрос в рукаптча отправлен')
         task_id = json.loads(answer.text)['request']
         logger.info(f'TASK ID - {task_id}')
@@ -61,7 +79,8 @@ def bypass_captcha(drv: webdriver.Chrome):
             result = json.loads(task_answer.text)
             status = result['status']
             if status == 1:
-                count += 1
+                # count += 1
+                logger.info(f'CURRENT COUNT - {count}')
                 try:
                     logger.info('Получен ответ от RuCaptcha')
                     captcha = json.loads(task_answer.text)['request']
@@ -71,8 +90,10 @@ def bypass_captcha(drv: webdriver.Chrome):
                         time.sleep(0.1)
                         send_captcha_button = driver.find_element(By.CSS_SELECTOR, '#ncapcha-submit')
                         send_captcha_button.click()
-                        time.sleep(3)
                         logger.info('Каптча отправлена')
+                        time_for_response = round(time.time() - start_request, 3)
+                        logger.info(f'TIME FOR RESPONSE - {time_for_response}')
+                        time.sleep(3)
                         break
                     else:
                         logger.info('Каптча сменилась')
@@ -183,6 +204,8 @@ def collect_results(source: webdriver.Chrome.page_source):
 
 
 def load_website(name, birthday):
+    captcha_counts = 0
+    time_to_response = 0
     try:
         driver.get('https://old.fssp.gov.ru')
         logger.info(f'Главная страница загружена')
@@ -243,30 +266,31 @@ def load_website(name, birthday):
         # ActionChains(driver).send_keys(Keys.TAB)
         # ActionChains(driver).send_keys(Keys.TAB)
         birthday_field.send_keys(Keys.RETURN)
-
         time.sleep(2)
         logger.info(f'Форма отправлена')
         page = 1
         result = []
         while True:
             logger.info(f'Запущен цикл обхода страниц')
-            bypass_captcha(driver)
+            counts, time_resp = bypass_captcha(driver)
+            captcha_counts += counts
+            time_to_response += time_resp
             if page == 1 and check_tag_exists('.results h4'):
                 message = driver.find_element(By.CSS_SELECTOR, '.results h4').text
                 if message == 'По вашему запросу ничего не найдено':
                     logger.info('Задолженностей нет')
-                    return 'Задолженностей нет'
+                    return 'Задолженностей нет', captcha_counts, time_to_response
                 else:
                     logger.info(f'Непредвиденный h4 {message}')
-                    return f'Непредвиденный заголовок H4 / {message}'
+                    return f'Непредвиденный заголовок H4 / {message}', captcha_counts, time_to_response
             elif page == 1 and check_tag_exists('.results .empty'):
                 message = driver.find_element(By.CSS_SELECTOR, '.results .empty').text
                 if message == 'Извините, что-то пошло не так. Попробуйте позже':
                     logger.info('Извините, что-то пошло не так. Попробуйте позже')
-                    return 'Извините, что-то пошло не так. Попробуйте позже'
+                    return 'Извините, что-то пошло не так. Попробуйте позже', captcha_counts, time_to_response
                 else:
                     logger.info(f'Непредвиденный div .empty {message}')
-                    return f'Непредвиденный div .empty / {message}'
+                    return f'Непредвиденный div .empty / {message}', captcha_counts, time_to_response
             if check_tag_exists('.results-frame'):
                 logger.info(f'Переход на страницу {page}')
                 result.extend(collect_results(driver.page_source))
@@ -287,7 +311,7 @@ def load_website(name, birthday):
         print("Exception: {}".format(type(exception).__name__))
         print("Exception message: {}".format(exception))
         result = f'Сервис не отвечает / {type(exception).__name__}'
-    return result
+    return result, captcha_counts, time_to_response
 
 
 if __name__ == '__main__':

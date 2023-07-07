@@ -13,7 +13,8 @@ logger.add('debug.log', level='INFO', format='{time} {level} {message}', compres
 @logger.catch
 def main(name, birthday):
     logger.info(f'Запуск функции main')
-    final_result = {'result': load_website(name, birthday)}
+    res, rucaptcha_count, rucaptcha_time = load_website(name, birthday)
+    final_result = {'result': res}
     logger.info(f'Final result - {final_result}')
     if type(final_result['result']) == list:
         final_result['done'] = 1
@@ -37,7 +38,13 @@ def main(name, birthday):
         elif final_result['result']:
             final_result['done'] = 1
         else:
+            final_result['result'] = 'Ошибка при загрузке страницы'
+            final_result['error'] = "Не удолось обойти каптчу"
             final_result['done'] = 0
+    if rucaptcha_count:
+        final_result['rucaptcha_count'] = rucaptcha_count
+    if rucaptcha_time:
+        final_result['rucaptcha_time'] = rucaptcha_time
     with open('result.json', 'w', encoding='utf-8') as file:
         json.dump(final_result, file, indent=4, ensure_ascii=False)
     return final_result
